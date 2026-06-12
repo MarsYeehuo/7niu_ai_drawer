@@ -433,6 +433,14 @@ document.addEventListener("DOMContentLoaded", () => {
         modelInput.value = DEFAULT_MODEL;
     });
 
+    // Download canvas as image
+    $("downloadBtn").addEventListener("click", () => {
+        const link = document.createElement("a");
+        link.download = `drawing-${Date.now()}.png`;
+        link.href = canvas.toDataURL("image/png");
+        link.click();
+    });
+
     // Keyboard shortcut: Space to toggle listening
     document.addEventListener("keydown", (e) => {
         if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
