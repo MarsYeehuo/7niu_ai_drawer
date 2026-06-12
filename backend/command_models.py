@@ -7,8 +7,8 @@ class CanvasObject(BaseModel):
     id: int
     shape: str
     color: str
-    x: float = 0
-    y: float = 0
+    x: Optional[float] = None
+    y: Optional[float] = None
     width: Optional[float] = None
     height: Optional[float] = None
     radius: Optional[float] = None
