@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AI 语音绘图工具</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+    <div id="app">
+        <header>
+            <h1>AI 语音绘图工具</h1>
+            <div id="status-bar">
+                <span id="status-dot" class="dot-offline"></span>
+                <span id="status-text">未连接</span>
+            </div>
+        </header>
+
+        <main>
+            <div id="canvas-wrapper">
+                <canvas id="drawingCanvas"></canvas>
+            </div>
+
+            <aside id="sidebar">
+                <!-- Model config -->
+                <div id="model-section" class="card">
+                    <h3>模型配置</h3>
+                    <label for="modelInput">模型名称</label>
+                    <input type="text" id="modelInput" value="deepseek-v4-flash" />
+                    <button id="resetModelBtn" class="small-btn">恢复默认</button>
+                </div>
+
+                <!-- Microphone -->
+                <div id="mic-section" class="card">
+                    <button id="micBtn" class="mic-btn">🎤 开始语音输入</button>
+                    <div id="listening-indicator" class="indicator hidden">
+                        <span class="pulse"></span> 聆听中...
+                    </div>
+                </div>
+
+                <!-- Transcript -->
+                <div id="transcript-section" class="card">
+                    <h3>识别文本</h3>
+                    <div id="transcript" class="log-box"></div>
+                </div>
+
+                <!-- Feedback -->
+                <div id="feedback-section" class="card">
+                    <h3>反馈</h3>
+                    <div id="feedback" class="log-box"></div>
+                </div>
+
+                <!-- Canvas info -->
+                <div id="info-section" class="card">
+                    <h3>画布信息</h3>
+                    <div id="canvasSize">尺寸: 800 × 600</div>
+                    <div id="objectCount">对象数: 0</div>
+                </div>
+
+                <!-- Help -->
+                <div id="help-section" class="card">
+                    <h3>指令示例</h3>
+                    <ul>
+                        <li>画一个红色的圆</li>
+                        <li>画一个蓝色正方形</li>
+                        <li>把画布设为1024x768</li>
+                        <li>画一个房子</li>
+                        <li>在左上角画一棵绿色的树</li>
+                        <li>把红色圆改成蓝色</li>
+                        <li>撤销</li>
+                        <li>清空画布</li>
+                    </ul>
+                </div>
+            </aside>
+        </main>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
