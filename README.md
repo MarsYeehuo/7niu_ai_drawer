@@ -1,6 +1,6 @@
 # AI 语音绘图工具
 
-纯语音控制的绘图 Web 应用。用户通过语音指令完成绘图创作，无需鼠标或键盘。
+纯语音控制的绘图 Web 应用。通过语音指令完成绘图创作，无需鼠标或键盘。采用 LLM 驱动的分层绘制技术，让每个物体都由多层叠加形状构成（阴影、高光、渐变），画面更精致。
 
 ## 系统架构
 
@@ -12,19 +12,19 @@
 
 ### 1. 配置 API Key
 
-在项目根目录创建 `.env` 文件（已提供模板）：
+在项目根目录创建 `.env` 文件：
 
 ```
 ANTHROPIC_API_KEY=sk-your-key-here
-LLM_BASE_URL=https://api.anthropic.com
-DEFAULT_LLM_MODEL=deepseek-v4-flash
+LLM_BASE_URL=https://api.deepseek.com/anthropic
+DEFAULT_LLM_MODEL=deepseek-v4-pro
 ```
 
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
 | `ANTHROPIC_API_KEY` | API 密钥 | — |
-| `LLM_BASE_URL` | API 端点（Anthropic 格式兼容） | `https://api.anthropic.com` |
-| `DEFAULT_LLM_MODEL` | 默认模型名 | `deepseek-v4-flash` |
+| `LLM_BASE_URL` | API 端点（Anthropic 格式兼容） | `https://api.deepseek.com/anthropic` |
+| `DEFAULT_LLM_MODEL` | 默认模型名 | `deepseek-v4-pro` |
 
 ### 2. 安装依赖
 
@@ -58,6 +58,18 @@ python -m backend.main
 | 场景描述 | "画一个宁静的乡村傍晚" |
 | 文本绘制 | "写上'Hello'在右上角" |
 
+## 分层绘制效果
+
+应用通过 LLM prompt 引导，将每个物体拆解为 2-4 层叠加形状：
+
+| 物体 | 旧方式 | 新方式（分层） |
+|------|--------|---------------|
+| 圆 | 1 个实心圆 | 深色基底 + 亮色中层 + 高光（3 层） |
+| 树 | 1 矩形 + 1 圆形 | 树干阴影 + 树干 + 多层树冠渐变（6 层） |
+| 房子 | 1 矩形 + 1 三角形 | 墙壁 + 屋顶 + 屋顶边缘 + 门 + 窗（10+ 层） |
+
+试试"画一幅乡村傍晚"、"画一棵树"，观察叠加层次带来的视觉丰富度。 |
+
 ## Web Speech API 限制说明
 
 本应用使用浏览器内置的 Web Speech API 进行语音识别，存在以下限制：
@@ -75,4 +87,18 @@ python -m backend.main
 - **语音输入**：Web Speech API (SpeechRecognition)
 - **语音反馈**：Web Speech Synthesis (SpeechSynthesis)
 - **后端**：Python FastAPI + WebSocket
-- **指令解析**：LLM (Anthropic SDK 格式，支持多模型切换)
+- **指令解析**：LLM — Anthropic SDK 格式，支持多模型切换（默认 deepseek-v4-pro）
+- **指令日志**：按日期生成日志文件，记录思考过程、原始响应和解析结果
+- **画布下载**：一键导出当前画布为 PNG 图片
+
+## 更新日志
+
+| 版本 | 内容 |
+|------|------|
+| v1.0 | 基础语音绘图，WebSocket 实时通信 |
+| v1.1 | 修复 CanvasObject 浮点数验证错误 |
+| v1.2 | 画布下载为图片功能 |
+| v1.3 | 指令执行日志记录 |
+| v1.4 | LLM 指令校验，过滤模型幻觉 |
+| v1.5 | 默认模型切换为 deepseek-v4-pro |
+| v1.6 | 分层叠加绘制 prompt，提升画面精致度 |
