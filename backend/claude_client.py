@@ -5,6 +5,11 @@ from .config import LLM_API_KEY, LLM_BASE_URL, DEFAULT_LLM_MODEL
 from .command_models import CommandRequest, CommandResponse, DrawingCommand
 from .logger import log_instruction
 
+VALID_ACTIONS = {
+    "draw_shape", "clear_canvas", "resize_canvas",
+    "set_background", "undo", "add_text", "error",
+}
+
 
 SYSTEM_PROMPT = """You are an AI drawing assistant. Parse natural language drawing instructions into structured JSON commands.
 
@@ -43,6 +48,7 @@ red, blue, green, yellow, black, white, purple, orange, pink, brown, gray, cyan,
 5. For unclear instructions: make a reasonable guess and proceed.
 6. For completely unintelligible text: set action to "error".
 7. CRITICAL: Your tts_feedback MUST accurately reflect the commands you produce. If you output no draw_shape or other modification commands, do NOT claim success in tts_feedback. Say what actually happened (e.g. "I don't see what to draw" or "please give me a clearer instruction").
+8. CRITICAL: You MUST ONLY use the actions listed in the Supported Actions table above. Never invent new action names like "modify", "adjust_color", "draw_mountains", "change_color", or any other custom action. If you want to change an existing object's appearance, you must use "draw_shape" to draw a new shape on top of it with the same position and dimensions but new color.
 
 ## Output Format
 {"commands":[{"action":"draw_shape","shape":"circle","color":"red","x":400,"y":300,"radius":50,"fill":true,"stroke_width":2}],"tts_feedback":"好的，已画好一个红色圆形"}
@@ -103,13 +109,24 @@ def parse_command(request: CommandRequest) -> CommandResponse:
         ctx = request.context
         context_parts.append(f"Canvas size: {int(ctx.width)}x{int(ctx.height)}")
         if ctx.objects:
-            def _obj_pos(o):
+            def _obj_detail(o):
+                parts = []
                 if o.x is not None and o.y is not None:
-                    return f"({int(o.x)},{int(o.y)})"
-                if o.x1 is not None and o.y1 is not None:
-                    return f"({int(o.x1)},{int(o.y1)})"
-                return "(unknown)"
-            summaries = [f"  [{o.id}] {o.color} {o.shape} at {_obj_pos(o)}"
+                    parts.append(f"pos=({int(o.x)},{int(o.y)})")
+                if o.x1 is not None:
+                    coords = f"x1={int(o.x1)} y1={int(o.y1)} x2={int(o.x2)} y2={int(o.y2)}"
+                    if o.x3 is not None:
+                        coords += f" x3={int(o.x3)} y3={int(o.y3)}"
+                    parts.append(coords)
+                    return " ".join(parts)
+                if o.radius is not None:
+                    parts.append(f"radius={o.radius}")
+                if o.radius_x is not None:
+                    parts.append(f"radius_x={o.radius_x} radius_y={o.radius_y}")
+                if o.width is not None:
+                    parts.append(f"w={int(o.width)} h={int(o.height)}")
+                return " ".join(parts) if parts else "(unknown)"
+            summaries = [f"  [{o.id}] {o.color} {o.shape} {_obj_detail(o)}"
                          for o in ctx.objects]
             context_parts.append("Existing objects:\n" + "\n".join(summaries))
         else:
@@ -176,11 +193,21 @@ def parse_command(request: CommandRequest) -> CommandResponse:
     if not tts_feedback:
         tts_feedback = "指令已执行"
 
+    # Reject hallucinated actions (model sometimes invents custom actions)
+    cleaned = []
+    seen_bad_action = False
+    for cmd in commands:
+        if cmd.action not in VALID_ACTIONS:
+            seen_bad_action = True
+        else:
+            cleaned.append(cmd)
+    commands = cleaned
+    if seen_bad_action:
+        tts_feedback = "指令中包含不支持的绘图操作，请重新描述"
+
     # Safety net: if no actual drawing/change commands, override misleading feedback
-    has_effect = any(
-        cmd.action in ("draw_shape", "clear_canvas", "resize_canvas", "set_background", "add_text")
-        for cmd in commands
-    )
+    EFFECTIVE_ACTIONS = {"draw_shape", "clear_canvas", "resize_canvas", "set_background", "add_text"}
+    has_effect = any(cmd.action in EFFECTIVE_ACTIONS for cmd in commands)
     if not has_effect and commands:
         tts_feedback = "指令已收到，但在画布上没有产生变化"
     elif not commands:
