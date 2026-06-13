@@ -3,6 +3,7 @@ import re
 from anthropic import Anthropic
 from .config import LLM_API_KEY, LLM_BASE_URL, DEFAULT_LLM_MODEL
 from .command_models import CommandRequest, CommandResponse, DrawingCommand
+from .logger import log_instruction
 
 
 SYSTEM_PROMPT = """You are an AI drawing assistant. Parse natural language drawing instructions into structured JSON commands.
@@ -68,9 +69,27 @@ def _extract_text(response) -> str:
     return ""
 
 
+def _extract_thinking(response) -> str:
+    """Extract thinking/reasoning content from ThinkingBlocks."""
+    parts = []
+    for block in response.content:
+        if hasattr(block, "thinking") and block.thinking:
+            parts.append(block.thinking)
+    return "\n".join(parts)
+
+
 def parse_command(request: CommandRequest) -> CommandResponse:
     """Send user text to LLM (via Anthropic SDK format) and parse into drawing commands."""
     model = request.model or DEFAULT_LLM_MODEL
+
+    # Build context dict for logging
+    ctx_dict = {"width": 800, "height": 600, "objects": []}
+    if request.context:
+        ctx_dict = {
+            "width": request.context.width,
+            "height": request.context.height,
+            "objects": [o.model_dump() for o in request.context.objects],
+        }
 
     if not LLM_API_KEY or LLM_API_KEY == "your-api-key-here":
         return CommandResponse(
@@ -99,6 +118,11 @@ def parse_command(request: CommandRequest) -> CommandResponse:
     context_str = "\n".join(context_parts)
     user_msg = f"{context_str}\n\nUser instruction: {request.text}"
 
+    thinking = None
+    raw_text = None
+    commands_data = []
+    tts_feedback = ""
+
     # Primary call
     try:
         client = Anthropic(api_key=LLM_API_KEY, base_url=LLM_BASE_URL)
@@ -108,8 +132,12 @@ def parse_command(request: CommandRequest) -> CommandResponse:
             system=SYSTEM_PROMPT,
             messages=[{"role": "user", "content": user_msg}],
         )
-        content = _clean_json(_extract_text(response))
+        thinking = _extract_thinking(response) or None
+        raw_text = _extract_text(response)
+        content = _clean_json(raw_text)
         data = json.loads(content)
+        commands_data = data.get("commands", [])
+        tts_feedback = data.get("tts_feedback", "指令已执行")
     except Exception as e1:
         err_msg = str(e1)[:80]
         # Fallback: simpler prompt
@@ -123,17 +151,30 @@ def parse_command(request: CommandRequest) -> CommandResponse:
                        '"tts_feedback":"抱歉，解析失败，请重新描述"}',
                 messages=[{"role": "user", "content": request.text}],
             )
-            content = _clean_json(_extract_text(response))
+            raw_text = _extract_text(response)
+            content = _clean_json(raw_text)
             data = json.loads(content)
+            commands_data = data.get("commands", [])
+            tts_feedback = data.get("tts_feedback", "抱歉，解析失败，请重新描述")
         except Exception as e2:
+            log_instruction(
+                user_text=request.text,
+                model=model,
+                context_before=ctx_dict,
+                thinking=thinking,
+                raw_response=raw_text,
+                parsed_commands=[],
+                has_effect=False,
+                tts_feedback=f"API 调用失败: {err_msg or str(e2)[:80]}",
+            )
             return CommandResponse(
                 commands=[DrawingCommand(action="error")],
                 tts_feedback=f"API 调用失败: {err_msg or str(e2)[:80]}",
             )
 
-    commands_data = data.get("commands", [])
     commands = [DrawingCommand(**cmd) for cmd in commands_data]
-    tts_feedback = data.get("tts_feedback", "指令已执行")
+    if not tts_feedback:
+        tts_feedback = "指令已执行"
 
     # Safety net: if no actual drawing/change commands, override misleading feedback
     has_effect = any(
@@ -144,5 +185,17 @@ def parse_command(request: CommandRequest) -> CommandResponse:
         tts_feedback = "指令已收到，但在画布上没有产生变化"
     elif not commands:
         tts_feedback = "未识别到绘图指令，请重新描述"
+
+    # Log the instruction and result
+    log_instruction(
+        user_text=request.text,
+        model=model,
+        context_before=ctx_dict,
+        thinking=thinking,
+        raw_response=raw_text,
+        parsed_commands=[cmd.model_dump() for cmd in commands],
+        has_effect=has_effect,
+        tts_feedback=tts_feedback,
+    )
 
     return CommandResponse(commands=commands, tts_feedback=tts_feedback)
