@@ -1,6 +1,6 @@
 # AI 语音绘图工具
 
-纯语音控制的绘图 Web 应用。用户通过语音指令完成绘图创作，无需鼠标或键盘。
+纯语音控制的绘图 Web 应用。通过语音指令完成绘图创作，无需鼠标或键盘。采用 **两步式绘图架构**：先规划场景再生成指令，画面更精致、输出更可靠。
 
 ## 系统架构
 
@@ -8,23 +8,41 @@
 浏览器 (Canvas + Web Speech API)  ←→  Python FastAPI (WebSocket)  ←→  LLM API (Anthropic SDK 格式)
 ```
 
+## 两步式绘图架构（v2.0）
+
+LLM 指令解析拆分为两个独立阶段：
+
+```
+用户语音 → [Step 1: 场景规划] → 构图方案（调色板/图层） → [Step 2: 指令执行] → draw_shape 命令 → Canvas 渲染
+```
+
+| 阶段 | 模式 | 职责 |
+|------|------|------|
+| **场景规划** | 无思考（快速） | 分析指令，输出构图方案：调色板、图层组成、元素描述 |
+| **指令执行** | 无思考（可靠） | 将规划方案机械转换为 `draw_shape` 等具体绘图命令 |
+
+两步式优势：
+- **关注点分离**：规划阶段专注创意设计，执行阶段专注坐标计算
+- **输出稳定**：执行阶段机械转换，极少幻觉出非法动作
+- **错误隔离**：规划失败自动回退到单步模式
+
 ## 快速开始
 
 ### 1. 配置 API Key
 
-在项目根目录创建 `.env` 文件（已提供模板）：
+在项目根目录创建 `.env` 文件：
 
 ```
 ANTHROPIC_API_KEY=sk-your-key-here
-LLM_BASE_URL=https://api.anthropic.com
-DEFAULT_LLM_MODEL=deepseek-v4-flash
+LLM_BASE_URL=https://api.deepseek.com/anthropic
+DEFAULT_LLM_MODEL=deepseek-v4-pro
 ```
 
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
 | `ANTHROPIC_API_KEY` | API 密钥 | — |
-| `LLM_BASE_URL` | API 端点（Anthropic 格式兼容） | `https://api.anthropic.com` |
-| `DEFAULT_LLM_MODEL` | 默认模型名 | `deepseek-v4-flash` |
+| `LLM_BASE_URL` | API 端点（Anthropic 格式兼容） | `https://api.deepseek.com/anthropic` |
+| `DEFAULT_LLM_MODEL` | 默认模型名 | `deepseek-v4-pro` |
 
 ### 2. 安装依赖
 
@@ -75,4 +93,20 @@ python -m backend.main
 - **语音输入**：Web Speech API (SpeechRecognition)
 - **语音反馈**：Web Speech Synthesis (SpeechSynthesis)
 - **后端**：Python FastAPI + WebSocket
-- **指令解析**：LLM (Anthropic SDK 格式，支持多模型切换)
+- **指令解析**：LLM — Anthropic SDK 格式，支持多模型切换（默认 deepseek-v4-pro）
+- **两步式架构**：场景规划（Plan）→ 指令执行（Execute），自动回退保障
+- **指令日志**：按日期生成日志文件，记录思考过程、原始响应和解析结果
+- **画布下载**：一键导出当前画布为 PNG 图片
+
+## 更新日志
+
+| 版本 | 内容 |
+|------|------|
+| v2.0 | 两步式绘图架构：先规划场景再生成指令；修复 WebSocket 超时 |
+| v1.6 | 分层叠加绘制 prompt，提升画面精致度 |
+| v1.5 | 默认模型切换为 deepseek-v4-pro |
+| v1.4 | LLM 指令校验，过滤模型幻觉 |
+| v1.3 | 指令执行日志记录 |
+| v1.2 | 画布下载为图片功能 |
+| v1.1 | 修复 CanvasObject 浮点数验证错误 |
+| v1.0 | 基础语音绘图，WebSocket 实时通信 |

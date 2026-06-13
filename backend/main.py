@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 import sys
@@ -47,7 +48,8 @@ async def websocket_endpoint(websocket: WebSocket):
                 model=data.get("model"),  # optional model override from frontend
                 context=context,
             )
-            response = parse_command(req)
+            # Run LLM calls in a thread to keep the event loop responsive (WebSocket pings, etc.)
+            response = await asyncio.to_thread(parse_command, req)
 
             await websocket.send_json(json.loads(response.model_dump_json()))
     except WebSocketDisconnect:
@@ -66,7 +68,14 @@ async def websocket_endpoint(websocket: WebSocket):
 
 def main():
     import uvicorn
-    uvicorn.run("backend.main:app", host=HOST, port=PORT, reload=True)
+    uvicorn.run(
+        "backend.main:app",
+        host=HOST,
+        port=PORT,
+        reload=True,
+        ws_ping_interval=30,    # seconds between WebSocket pings
+        ws_ping_timeout=120,    # wait up to 120s for pong before disconnect
+    )
 
 
 if __name__ == "__main__":
