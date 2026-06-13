@@ -1,7 +1,7 @@
 /* ===== Configuration ===== */
 const IDLE_TIMEOUT = 1500;
 const IDLE_TIMEOUT_FINAL = 3000;
-const DEFAULT_MODEL = "deepseek-v4-flash";
+const DEFAULT_MODEL = "deepseek-v4-pro";
 
 const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
 const WS_URL = `${protocol}//${window.location.host}/ws`;
