@@ -41,6 +41,7 @@ red, blue, green, yellow, black, white, purple, orange, pink, brown, gray, cyan,
 4. For relative positioning ("to the right of", "above", "next to"), estimate pixel offsets.
 5. For unclear instructions: make a reasonable guess and proceed.
 6. For completely unintelligible text: set action to "error".
+7. CRITICAL: Your tts_feedback MUST accurately reflect the commands you produce. If you output no draw_shape or other modification commands, do NOT claim success in tts_feedback. Say what actually happened (e.g. "I don't see what to draw" or "please give me a clearer instruction").
 
 ## Output Format
 {"commands":[{"action":"draw_shape","shape":"circle","color":"red","x":400,"y":300,"radius":50,"fill":true,"stroke_width":2}],"tts_feedback":"好的，已画好一个红色圆形"}
@@ -133,4 +134,15 @@ def parse_command(request: CommandRequest) -> CommandResponse:
     commands_data = data.get("commands", [])
     commands = [DrawingCommand(**cmd) for cmd in commands_data]
     tts_feedback = data.get("tts_feedback", "指令已执行")
+
+    # Safety net: if no actual drawing/change commands, override misleading feedback
+    has_effect = any(
+        cmd.action in ("draw_shape", "clear_canvas", "resize_canvas", "set_background", "add_text")
+        for cmd in commands
+    )
+    if not has_effect and commands:
+        tts_feedback = "指令已收到，但在画布上没有产生变化"
+    elif not commands:
+        tts_feedback = "未识别到绘图指令，请重新描述"
+
     return CommandResponse(commands=commands, tts_feedback=tts_feedback)
