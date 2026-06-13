@@ -70,6 +70,92 @@ COMMAND COUNT: For simple instructions ("draw a circle"), use 2-4 commands (main
 IMPORTANT: ONLY output the JSON object, nothing else."""
 
 
+PLAN_PROMPT = """You are a scene composition planner. Given a drawing instruction, output a JSON plan describing what to draw.
+
+Output ONLY valid JSON — no markdown, no code fences, no extra text.
+
+{
+  "scene": "brief scene description",
+  "palette": ["color1", "color2"],
+  "composition": [
+    {"z": 0, "name": "layer name", "description": "what to draw here", "style": "style notes"},
+    {"z": 1, "name": "next layer", "description": "what to draw here", "style": "style notes"}
+  ]
+}
+
+Rules:
+1. Use standard color names or hex codes.
+2. List layers from back (z=0, background) to front.
+3. 2-6 composition layers for simple scenes, up to 12 for complex scenes.
+4. "description" must be specific enough for execution: mention shapes, relative positions, and colors.
+5. "style" can include fill, stroke, or layering hints.
+6. Do NOT include pixel coordinates — describe composition only.
+7. For complex objects (tree, house, mountain), describe their layered sub-parts in the description.
+
+IMPORTANT: ONLY output the JSON object, nothing else."""
+
+
+EXECUTE_PROMPT = """You are a drawing command generator. Your job is to mechanically translate a scene plan into drawing commands.
+
+## Canvas
+- Coordinates: (0,0) = top-left, x→right, y→down. Values in pixels.
+- Canvas width and height are provided in the context.
+
+## Supported Actions
+| action | description | required fields |
+|--------|-------------|-----------------|
+| draw_shape | Draw a shape | shape, color, position + shape-specific fields |
+| clear_canvas | Remove everything | none |
+| resize_canvas | Change canvas size | width, height |
+| set_background | Fill background | color |
+| undo | Remove last object | none |
+| add_text | Draw text | text, x, y, color, font_size |
+
+## Supported Shapes (for draw_shape)
+| shape | required fields |
+|-------|----------------|
+| circle | x, y, radius |
+| rectangle | x, y, width, height |
+| triangle | x1, y1, x2, y2, x3, y3 |
+| line | x1, y1, x2, y2 |
+| ellipse | x, y, radius_x, radius_y |
+| point | x, y, radius (small dot) |
+
+## Standard Colors
+red, blue, green, yellow, black, white, purple, orange, pink, brown, gray, cyan, magenta, lime, navy, teal, maroon, olive, coral, gold, silver, beige, violet, indigo, turquoise. You may also use hex codes like #FF4500.
+
+## Rules
+1. Output ONLY valid JSON — no markdown, no code fences, no extra text.
+2. Build each object using 2-4 layered, overlapping shapes with slightly different sizes and colors to create depth, shading, and visual richness.
+3. Calculate pixel positions using canvas dimensions from context.
+4. For unclear positions: make a reasonable guess and proceed.
+5. CRITICAL: You MUST ONLY use the actions listed in the Supported Actions table above.
+6. CRITICAL: Your tts_feedback MUST accurately reflect the commands you produce.
+
+## Layering Technique
+Use 2-4 overlapping shapes per visible object. Examples:
+- **Circle/Object**: main circle + slightly smaller lighter circle for highlight + smaller bright center.
+- **Tree**: trunk (brown rect) + trunk shadow (dark brown rect) + main canopy (green circle) + highlight (lighter smaller circle).
+- **House**: wall (rect) + roof (triangle) + darker roof edge (smaller triangle) + door (rect).
+- **Mountains**: base triangle + lighter overlapping triangle + white snow cap.
+
+Use fill=true for all layers. stroke_width=0 for fill-only blend layers, stroke_width=1 for outlines.
+
+## Output Format
+{"commands":[{"action":"draw_shape","shape":"circle","color":"red","x":400,"y":300,"radius":50,"fill":true,"stroke_width":2}],"tts_feedback":"好的，已画好一个红色圆形"}
+
+For errors:
+{"commands":[{"action":"error"}],"tts_feedback":"抱歉，我没有理解您的指令"}
+
+## Execution Mode
+You will receive a scene plan JSON together with the original instruction. Translate each element of the plan into precise drawing commands. Follow the plan exactly — do NOT add objects or change the composition. Use the layering technique to make each object visually rich.
+
+## Efficiency
+Keep your reasoning concise. Calculate coordinates directly and output commands. Aim for 5-15 commands per scene.
+
+IMPORTANT: ONLY output the JSON object, nothing else."""
+
+
 def _clean_json(text: str) -> str:
     """Extract JSON from LLM response, stripping markdown fences if present."""
     json_match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text)
@@ -95,26 +181,22 @@ def _extract_thinking(response) -> str:
     return "\n".join(parts)
 
 
-def parse_command(request: CommandRequest) -> CommandResponse:
-    """Send user text to LLM (via Anthropic SDK format) and parse into drawing commands."""
-    model = request.model or DEFAULT_LLM_MODEL
+def _call_llm(system, messages, model, max_tokens=2048, thinking_disabled=False):
+    """Call the LLM via Anthropic SDK format with optional thinking control."""
+    client = Anthropic(api_key=LLM_API_KEY, base_url=LLM_BASE_URL)
+    kwargs = {
+        "model": model,
+        "max_tokens": max_tokens,
+        "system": system,
+        "messages": messages,
+    }
+    if thinking_disabled:
+        kwargs["thinking"] = {"type": "disabled"}
+    return client.messages.create(**kwargs)
 
-    # Build context dict for logging
-    ctx_dict = {"width": 800, "height": 600, "objects": []}
-    if request.context:
-        ctx_dict = {
-            "width": request.context.width,
-            "height": request.context.height,
-            "objects": [o.model_dump() for o in request.context.objects],
-        }
 
-    if not LLM_API_KEY or LLM_API_KEY == "your-api-key-here":
-        return CommandResponse(
-            commands=[DrawingCommand(action="error")],
-            tts_feedback="请在 .env 文件中配置 ANTHROPIC_API_KEY",
-        )
-
-    # Build context string
+def _build_context_str(request: CommandRequest) -> str:
+    """Build context description string for LLM messages."""
     context_parts = []
     if request.context:
         ctx = request.context
@@ -142,64 +224,154 @@ def parse_command(request: CommandRequest) -> CommandResponse:
             context_parts.append("Existing objects:\n" + "\n".join(summaries))
         else:
             context_parts.append("Canvas is empty.")
+    return "\n".join(context_parts)
 
-    context_str = "\n".join(context_parts)
+
+def _plan_scene(request: CommandRequest, model: str) -> tuple:
+    """Step 1: Plan the scene composition (thinking disabled, fast)."""
+    context_str = _build_context_str(request)
     user_msg = f"{context_str}\n\nUser instruction: {request.text}"
 
-    thinking = None
-    raw_text = None
+    response = _call_llm(
+        system=PLAN_PROMPT,
+        messages=[{"role": "user", "content": user_msg}],
+        model=model,
+        max_tokens=1024,
+        thinking_disabled=True,
+    )
+
+    thinking = _extract_thinking(response) or None
+    raw_text = _extract_text(response)
+    content = _clean_json(raw_text)
+    plan_data = json.loads(content)
+
+    return plan_data, thinking, raw_text
+
+
+def _execute_plan(plan_data: dict, request: CommandRequest, model: str) -> tuple:
+    """Step 2: Translate scene plan into drawing commands (no thinking for reliable output)."""
+    context_str = _build_context_str(request)
+    plan_json = json.dumps(plan_data, ensure_ascii=False, indent=2)
+    user_msg = (
+        f"{context_str}\n\n"
+        f"Scene Plan:\n{plan_json}\n\n"
+        f"Original instruction: {request.text}\n\n"
+        f"Translate this plan into drawing commands."
+    )
+
+    response = _call_llm(
+        system=EXECUTE_PROMPT,
+        messages=[{"role": "user", "content": user_msg}],
+        model=model,
+        max_tokens=4096,
+        thinking_disabled=True,
+    )
+
+    thinking = _extract_thinking(response) or None
+    raw_text = _extract_text(response)
+    content = _clean_json(raw_text)
+    data = json.loads(content)
+
+    commands_data = data.get("commands", [])
+    tts_feedback = data.get("tts_feedback", "指令已执行")
+    return commands_data, tts_feedback, thinking, raw_text
+
+
+def _build_ctx_dict(request: CommandRequest) -> dict:
+    """Build context dictionary for logging."""
+    ctx_dict = {"width": 800, "height": 600, "objects": []}
+    if request.context:
+        ctx_dict = {
+            "width": request.context.width,
+            "height": request.context.height,
+            "objects": [o.model_dump() for o in request.context.objects],
+        }
+    return ctx_dict
+
+
+def parse_command(request: CommandRequest) -> CommandResponse:
+    """Send user text to LLM and parse into drawing commands.
+
+    Uses a two-step approach: plan (no thinking) -> execute (no thinking).
+    Falls back to the original single-step method if the two-step process fails.
+    """
+    model = request.model or DEFAULT_LLM_MODEL
+    ctx_dict = _build_ctx_dict(request)
+
+    if not LLM_API_KEY or LLM_API_KEY == "your-api-key-here":
+        return CommandResponse(
+            commands=[DrawingCommand(action="error")],
+            tts_feedback="请在 .env 文件中配置 ANTHROPIC_API_KEY",
+        )
+
+    # === Two-step approach: plan (no thinking) -> execute (with thinking) ===
+    plan_thinking = None
+    plan_raw = None
+    exec_thinking = None
+    exec_raw = None
     commands_data = []
     tts_feedback = ""
+    used_two_step = False
 
-    # Primary call
     try:
-        client = Anthropic(api_key=LLM_API_KEY, base_url=LLM_BASE_URL)
-        response = client.messages.create(
-            model=model,
-            max_tokens=2048,
-            system=SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": user_msg}],
-        )
-        thinking = _extract_thinking(response) or None
-        raw_text = _extract_text(response)
-        content = _clean_json(raw_text)
-        data = json.loads(content)
-        commands_data = data.get("commands", [])
-        tts_feedback = data.get("tts_feedback", "指令已执行")
-    except Exception as e1:
-        err_msg = str(e1)[:80]
-        # Fallback: simpler prompt
+        plan_data, plan_thinking, plan_raw = _plan_scene(request, model)
+        commands_data, tts_feedback, exec_thinking, exec_raw = _execute_plan(plan_data, request, model)
+        used_two_step = True
+    except Exception:
+        pass
+
+    # === Fallback: original single-step approach ===
+    if not used_two_step:
         try:
             client = Anthropic(api_key=LLM_API_KEY, base_url=LLM_BASE_URL)
+            context_str = _build_context_str(request)
             response = client.messages.create(
                 model=model,
                 max_tokens=2048,
-                system="Parse the following drawing instruction and output JSON. "
-                       'If all else fails, output: {"commands":[{"action":"error"}],'
-                       '"tts_feedback":"抱歉，解析失败，请重新描述"}',
-                messages=[{"role": "user", "content": request.text}],
+                system=SYSTEM_PROMPT,
+                messages=[{"role": "user", "content": f"{context_str}\n\nUser instruction: {request.text}"}],
             )
-            raw_text = _extract_text(response)
-            content = _clean_json(raw_text)
+            exec_thinking = _extract_thinking(response) or None
+            exec_raw = _extract_text(response)
+            content = _clean_json(exec_raw)
             data = json.loads(content)
             commands_data = data.get("commands", [])
-            tts_feedback = data.get("tts_feedback", "抱歉，解析失败，请重新描述")
-        except Exception as e2:
-            log_instruction(
-                user_text=request.text,
-                model=model,
-                context_before=ctx_dict,
-                thinking=thinking,
-                raw_response=raw_text,
-                parsed_commands=[],
-                has_effect=False,
-                tts_feedback=f"API 调用失败: {err_msg or str(e2)[:80]}",
-            )
-            return CommandResponse(
-                commands=[DrawingCommand(action="error")],
-                tts_feedback=f"API 调用失败: {err_msg or str(e2)[:80]}",
-            )
+            tts_feedback = data.get("tts_feedback", "指令已执行")
+        except Exception as e1:
+            err_msg = str(e1)[:80]
+            # Second fallback: simpler prompt
+            try:
+                client = Anthropic(api_key=LLM_API_KEY, base_url=LLM_BASE_URL)
+                response = client.messages.create(
+                    model=model,
+                    max_tokens=2048,
+                    system="Parse the following drawing instruction and output JSON. "
+                           'If all else fails, output: {"commands":[{"action":"error"}],'
+                           '"tts_feedback":"抱歉，解析失败，请重新描述"}',
+                    messages=[{"role": "user", "content": request.text}],
+                )
+                exec_raw = _extract_text(response)
+                content = _clean_json(exec_raw)
+                data = json.loads(content)
+                commands_data = data.get("commands", [])
+                tts_feedback = data.get("tts_feedback", "抱歉，解析失败，请重新描述")
+            except Exception as e2:
+                log_instruction(
+                    user_text=request.text,
+                    model=model,
+                    context_before=ctx_dict,
+                    thinking=exec_thinking,
+                    raw_response=exec_raw,
+                    parsed_commands=[],
+                    has_effect=False,
+                    tts_feedback=f"API 调用失败: {err_msg or str(e2)[:80]}",
+                )
+                return CommandResponse(
+                    commands=[DrawingCommand(action="error")],
+                    tts_feedback=f"API 调用失败: {err_msg or str(e2)[:80]}",
+                )
 
+    # === Common post-processing ===
     commands = [DrawingCommand(**cmd) for cmd in commands_data]
     if not tts_feedback:
         tts_feedback = "指令已执行"
@@ -224,13 +396,32 @@ def parse_command(request: CommandRequest) -> CommandResponse:
     elif not commands:
         tts_feedback = "未识别到绘图指令，请重新描述"
 
-    # Log the instruction and result
+    # Combine thinking traces for logging
+    combined_thinking = None
+    if used_two_step:
+        if plan_thinking and exec_thinking:
+            combined_thinking = f"[Planning phase]\n{plan_thinking}\n\n[Execution phase]\n{exec_thinking}"
+        elif plan_thinking:
+            combined_thinking = plan_thinking
+        elif exec_thinking:
+            combined_thinking = exec_thinking
+    else:
+        combined_thinking = exec_thinking
+
+    # Combine raw responses for logging
+    raw_response = exec_raw
+    if used_two_step and plan_raw:
+        raw_response = json.dumps(
+            {"plan_response": plan_raw, "execute_response": exec_raw},
+            ensure_ascii=False,
+        )
+
     log_instruction(
         user_text=request.text,
         model=model,
         context_before=ctx_dict,
-        thinking=thinking,
-        raw_response=raw_text,
+        thinking=combined_thinking,
+        raw_response=raw_response,
         parsed_commands=[cmd.model_dump() for cmd in commands],
         has_effect=has_effect,
         tts_feedback=tts_feedback,
