@@ -83,7 +83,13 @@ def parse_command(request: CommandRequest) -> CommandResponse:
         ctx = request.context
         context_parts.append(f"Canvas size: {int(ctx.width)}x{int(ctx.height)}")
         if ctx.objects:
-            summaries = [f"  [{o.id}] {o.color} {o.shape} at ({int(o.x)},{int(o.y)})"
+            def _obj_pos(o):
+                if o.x is not None and o.y is not None:
+                    return f"({int(o.x)},{int(o.y)})"
+                if o.x1 is not None and o.y1 is not None:
+                    return f"({int(o.x1)},{int(o.y1)})"
+                return "(unknown)"
+            summaries = [f"  [{o.id}] {o.color} {o.shape} at {_obj_pos(o)}"
                          for o in ctx.objects]
             context_parts.append("Existing objects:\n" + "\n".join(summaries))
         else:
