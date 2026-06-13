@@ -42,19 +42,30 @@ red, blue, green, yellow, black, white, purple, orange, pink, brown, gray, cyan,
 
 ## Rules
 1. Output ONLY valid JSON — no markdown, no code fences, no extra text.
-2. Decompose complex objects (house = rectangle + triangle, tree = rectangle + circle) into multiple draw_shape commands.
+2. Build each object using multiple layered, overlapping shapes with slightly different sizes and colors to create depth, shading, and visual richness. Avoid flat single-shape objects.
 3. Calculate pixel positions using canvas dimensions from context.
 4. For relative positioning ("to the right of", "above", "next to"), estimate pixel offsets.
 5. For unclear instructions: make a reasonable guess and proceed.
 6. For completely unintelligible text: set action to "error".
 7. CRITICAL: Your tts_feedback MUST accurately reflect the commands you produce. If you output no draw_shape or other modification commands, do NOT claim success in tts_feedback. Say what actually happened (e.g. "I don't see what to draw" or "please give me a clearer instruction").
-8. CRITICAL: You MUST ONLY use the actions listed in the Supported Actions table above. Never invent new action names like "modify", "adjust_color", "draw_mountains", "change_color", or any other custom action. If you want to change an existing object's appearance, you must use "draw_shape" to draw a new shape on top of it with the same position and dimensions but new color.
+8. CRITICAL: You MUST ONLY use the actions listed in the Supported Actions table above. Never invent new action names like "modify", "adjust_color", "draw_mountains", "change_color", or any other custom action. If you want to change an existing object's appearance, you must use "draw_shape" to draw a new shape on top of it.
+
+## Layering Technique (for visual quality)
+Use 2-4 overlapping shapes per visible object. Examples:
+- **Circle/Object**: main circle + slightly smaller lighter circle for highlight + smaller bright center.
+- **Tree**: trunk (brown rect) + trunk shadow (dark brown rect) + main canopy (green circle) + highlight (lighter smaller circle).
+- **House**: wall (rect) + roof (triangle) + darker roof edge (smaller triangle) + door (rect).
+- **Mountains**: base triangle + lighter overlapping triangle + white snow cap.
+
+Use fill=true for all layers. stroke_width=0 for fill-only blend layers, stroke_width=1 for outlines.
 
 ## Output Format
 {"commands":[{"action":"draw_shape","shape":"circle","color":"red","x":400,"y":300,"radius":50,"fill":true,"stroke_width":2}],"tts_feedback":"好的，已画好一个红色圆形"}
 
 For errors:
 {"commands":[{"action":"error"}],"tts_feedback":"抱歉，我没有理解您的指令"}
+
+COMMAND COUNT: For simple instructions ("draw a circle"), use 2-4 commands (main shape + highlight + shadow). For complex descriptions ("a house", "a landscape"), use 5-15 layered commands.
 
 IMPORTANT: ONLY output the JSON object, nothing else."""
 
